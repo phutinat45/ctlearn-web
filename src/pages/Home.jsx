@@ -235,7 +235,6 @@ function Home() {
                             </div>
                             <div className="profile-info">
                                 <h3>{student?.fullname || student?.username}</h3>
-                                <span>Level {stats.level} • User ID: {student?.id}</span>
                             </div>
                         </div>
 
@@ -389,5 +388,6 @@ function Home() {
     </>
   );
 }
+
 
 export default Home;
