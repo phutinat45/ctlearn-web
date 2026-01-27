@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient'; // ✅ ต้องมีบรรทัดนี้
+import { supabase } from '../supabaseClient'; 
 
 function Navbar() {
   const location = useLocation();
@@ -15,7 +15,7 @@ function Navbar() {
     return location.pathname === path ? 'active' : '';
   };
 
-  // --- ฟังก์ชันคำนวณ Streak (คงเดิม) ---
+  // --- ฟังก์ชันคำนวณ Streak (เหมือนเดิม) ---
   const calculateStreak = (progressData) => {
     if (!progressData || progressData.length === 0) return 0;
 
@@ -56,7 +56,7 @@ function Navbar() {
     return streak;
   };
 
-  // --- ฟังก์ชันดึงข้อมูล (คงเดิม) ---
+  // --- ฟังก์ชันดึงข้อมูล (ฉบับอัปเกรดความเร็ว 🚀) ---
   const fetchUserStats = async () => {
     try {
         const userStr = localStorage.getItem('currentUser');
@@ -64,37 +64,40 @@ function Navbar() {
 
         const user = JSON.parse(userStr);
 
-        const { data: progressData, error: progressError } = await supabase
+        // ✅ แก้ไขจุดนี้: ใช้การ Join Table (lessons) มาในคำสั่งเดียว
+        // แปลว่า: "ไปเอาประวัติการเรียนมา และฝากหยิบค่า XP ของบทเรียนนั้นติดมือมาด้วยเลย"
+        const { data: progressData, error } = await supabase
             .from('progress')
-            .select('lesson_id, created_at') 
+            .select(`
+                created_at,
+                lesson_id,
+                lessons ( xp )
+            `)
             .eq('student_id', user.id)
             .eq('passed', true);
 
-        if (progressError) throw progressError;
-
-        let currentStreak = 0;
-        let totalXP = 0;
-
-        if (progressData && progressData.length > 0) {
-            currentStreak = calculateStreak(progressData);
-
-            const lessonIds = progressData.map(p => p.lesson_id);
-            const { data: lessonsData, error: lessonsError } = await supabase
-                .from('lessons')
-                .select('xp')
-                .in('id', lessonIds);
-
-            if (lessonsError) throw lessonsError;
-
-            if (lessonsData) {
-                totalXP = lessonsData.reduce((sum, item) => sum + (item.xp || 0), 0);
-            }
+        if (error) {
+             // กรณี Database ยังไม่ทำ Foreign Key มันจะ Error เราจะรู้ทันที
+             console.error("Join Error (อาจยังไม่ได้เชื่อมตาราง):", error.message);
+             return;
         }
 
-        setStats({
-            totalXP: totalXP,
-            streak: currentStreak
-        });
+        if (progressData) {
+            // 1. คำนวณ XP รวม (ดึงจากตัวแปร lessons ที่ติดมาได้เลย)
+            const totalXP = progressData.reduce((sum, item) => {
+                // เช็คว่ามีข้อมูล lessons ไหม (กันเหนียว)
+                const lessonXP = item.lessons?.xp || 0;
+                return sum + lessonXP;
+            }, 0);
+
+            // 2. คำนวณ Streak
+            const currentStreak = calculateStreak(progressData);
+
+            setStats({
+                totalXP: totalXP,
+                streak: currentStreak
+            });
+        }
 
     } catch (err) {
         console.error("Navbar Error:", err.message);
@@ -109,17 +112,9 @@ function Navbar() {
     };
   }, []);
 
-  // 🔥🔥🔥 แก้ไขจุดนี้: ฟังก์ชัน Logout แบบล้างบาง (Force Refresh) 🔥🔥🔥
   const handleLogout = async () => {
-    // 1. ลบข้อมูล User ที่เราเก็บเอง
     localStorage.removeItem('currentUser');
-
-    // 2. สั่ง Supabase ให้ตัดการเชื่อมต่อ (สำคัญ! ล้าง Session ที่ค้างใน Browser)
     await supabase.auth.signOut();
-
-    // 3. ใช้ window.location.href แทน navigate 
-    // คำสั่งนี้จะบังคับให้ Browser โหลดหน้าใหม่ 100% เหมือนกด F5
-    // ข้อมูลเก่าของ Admin/Student จะถูกล้างหายไปแน่นอน
     window.location.href = '/login'; 
   };
 
@@ -154,18 +149,17 @@ function Navbar() {
 
         {/* ส่วนขวา */}
         <div className="nav-right">
-            <div className="streak-chip">
+            <div className="streak-chip" title="เรียนต่อเนื่อง (วัน)">
                 <i className="fa-solid fa-fire" style={{color: '#ff5722'}}></i> {stats.streak}
             </div>
             
-            <div className="xp-chip" key={stats.totalXP} style={{ animation: 'popIn 0.3s ease-out' }}>
+            <div className="xp-chip" key={stats.totalXP} style={{ animation: 'popIn 0.3s ease-out' }} title="คะแนนประสบการณ์รวม">
                 <i className="fa-solid fa-star"></i> {stats.totalXP} XP
             </div>
             
             <div className="divider-vertical"></div> 
 
-            {/* ปุ่มออกจากระบบ */}
-            <button className="btn-logout-text" onClick={handleLogout}>
+            <button className="btn-logout-text" onClick={handleLogout} title="ออกจากระบบ">
                 <i className="fa-solid fa-right-from-bracket"></i> ออกจากระบบ
             </button>
         </div>
