@@ -1,56 +1,57 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient'; 
+import Swal from 'sweetalert2'; 
 
 function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   
-  // ✅ 1. เพิ่ม State สำหรับสลับโหมด (Login <-> Register)
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  // ✅ 1. เพิ่ม State สำหรับตรวจสอบสถานะเริ่มต้น (กันหน้ากระพริบ)
+  const [isChecking, setIsChecking] = useState(true);
 
-  // รวมข้อมูล Form ทั้งหมดไว้ที่เดียว
+  // State เดิม
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [formData, setFormData] = useState({ 
     username: '', 
     password: '', 
-    // ส่วนเสริมสำหรับ Register
     fullname: '',
     confirmPassword: '',
     grade_level: 'ม.1'
   });
-
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [currentSlide, setCurrentSlide] = useState(0);
-
-  // ✅ เปลี่ยน images เป็น State และใส่ Default ไว้กันพลาด
   const [images, setImages] = useState([
     "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=1740&auto=format&fit=crop",
     "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=1740&auto=format&fit=crop",
     "https://images.unsplash.com/photo-1531482615713-2afd69097998?q=80&w=1740&auto=format&fit=crop"
   ]);
-
-  // ข้อความหน้าเว็บ
   const [loginText, setLoginText] = useState({
     title: 'ยินดีต้อนรับสู่ CTLearn',
     subtitle: 'เข้าสู่ระบบเพื่อเริ่มการเรียนรู้และพัฒนาทักษะของคุณ'
   });
 
-  // ✅ ดึงข้อมูลรูปภาพและข้อความจาก Supabase เมื่อโหลดหน้าเว็บ
+  const [isMaintenance, setIsMaintenance] = useState(false);
+  
+  // ตรวจสอบ Backdoor (?admin=true)
+  const queryParams = new URLSearchParams(location.search);
+  const isAdminBypass = queryParams.get('admin') === 'Nan29032545';
+
   useEffect(() => {
     const fetchPageData = async () => {
         try {
-            // 1. ดึงรูปสไลด์ (login_slides)
+            // 1. ดึงรูปสไลด์
             const { data: slidesData } = await supabase
                 .from('login_slides')
                 .select('image_url')
-                .order('created_at', { ascending: false }); // เอารูปใหม่สุดขึ้นก่อน
+                .order('created_at', { ascending: false });
 
             if (slidesData && slidesData.length > 0) {
-                // แปลง object ให้เป็น array ของ url string
                 setImages(slidesData.map(s => s.image_url));
             }
 
-            // 2. ดึงข้อความตั้งค่า (site_settings)
+            // 2. ดึงการตั้งค่า
             const { data: settingsData } = await supabase
                 .from('site_settings')
                 .select('*')
@@ -62,11 +63,18 @@ function Login() {
                     subtitle: settingsData.subtitle || 'เข้าสู่ระบบเพื่อเริ่มการเรียนรู้และพัฒนาทักษะของคุณ'
                 });
                 
-                // (Optional) ถ้ามีการตั้งค่า Maintenance Mode อาจจะเช็คตรงนี้ได้
+                if (settingsData.maintenance_mode === true) {
+                    setIsMaintenance(true);
+                } else {
+                    setIsMaintenance(false);
+                }
             }
 
         } catch (error) {
             console.error("Error fetching login data:", error);
+        } finally {
+            // ✅ สำคัญ: เมื่อโหลดเสร็จแล้ว (ไม่ว่าจะสำเร็จหรือพัง) ให้เลิกสถานะ Checking
+            setIsChecking(false);
         }
     };
 
@@ -79,14 +87,12 @@ function Login() {
       setCurrentSlide((prev) => (prev + 1) % images.length);
     }, 5000);
     return () => clearInterval(interval);
-  }, [images.length]); // dependency เป็น images.length เพื่อให้ reset loop เมื่อรูปเปลี่ยน
+  }, [images.length]);
 
-  // ฟังก์ชันอัปเดตข้อมูลใน Form
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // --- ฟังก์ชันเข้าสู่ระบบ (Login) ---
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -98,20 +104,33 @@ function Login() {
         .select('*')
         .eq('username', formData.username)
         .eq('password', formData.password) 
-        .eq('status', 'active') 
         .single();
 
       if (error || !data) throw new Error('ชื่อผู้ใช้งาน หรือ รหัสผ่านไม่ถูกต้อง');
+      if (data.status === 'inactive') throw new Error('บัญชีของคุณถูกระงับ');
 
-      // บันทึก User
+      // เช็ค Maintenance
+      if (isMaintenance && data.role !== 'admin' && !isAdminBypass) {
+         throw new Error('ระบบปิดปรับปรุงชั่วคราว (เข้าได้เฉพาะผู้ดูแลระบบ)');
+      }
+
       localStorage.setItem('currentUser', JSON.stringify(data));
 
-      // Redirect ตาม Role
-      if (data.role === 'admin') {
-          navigate('/teacher');    
-      } else {
-          navigate('/dashboard');  
-      }
+      Swal.fire({
+          icon: 'success',
+          title: 'ยินดีต้อนรับ',
+          text: `สวัสดีคุณ ${data.fullname}`,
+          timer: 1500,
+          showConfirmButton: false
+      }).then(() => {
+          if (data.role === 'admin') {
+            navigate('/teacher'); 
+            window.location.reload();   
+          } else {
+            navigate('/dashboard');  
+            window.location.reload();
+          }
+      });
 
     } catch (err) {
       console.error(err);
@@ -121,7 +140,6 @@ function Login() {
     }
   };
 
-  // --- ฟังก์ชันสมัครสมาชิก (Register) ---
   const handleRegister = async (e) => {
     e.preventDefault();
     setErrorMsg('');
@@ -133,7 +151,6 @@ function Login() {
 
     setLoading(true);
     try {
-      // 1. เช็ค Username ซ้ำ
       const { data: existingUser } = await supabase
         .from('users')
         .select('id')
@@ -144,7 +161,6 @@ function Login() {
         throw new Error("ชื่อผู้ใช้งานนี้มีคนใช้แล้ว");
       }
 
-      // 2. บันทึกข้อมูล
       const newUser = {
         fullname: formData.fullname,
         username: formData.username,
@@ -157,7 +173,7 @@ function Login() {
       const { error } = await supabase.from('users').insert([newUser]);
       if (error) throw error;
 
-      alert("✅ สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ");
+      Swal.fire('สำเร็จ', 'สมัครสมาชิกเรียบร้อย กรุณาเข้าสู่ระบบ', 'success');
       setIsRegisterMode(false);
       setFormData({ ...formData, password: '', confirmPassword: '' });
 
@@ -169,10 +185,46 @@ function Login() {
     }
   };
 
+  // ✅ ส่วนแสดงผล: ถ้ากำลังเช็คข้อมูล ให้โชว์หน้าขาวหรือ Loading ไปก่อน
+  if (isChecking) {
+    return (
+        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
+            {/* ใส่ Spinner หมุนๆ เล็กน้อยให้รู้ว่าไม่ได้ค้าง */}
+            <div style={{color: '#3b82f6', fontSize: '2rem'}}>
+                <i className="fa-solid fa-circle-notch fa-spin"></i>
+            </div>
+        </div>
+    );
+  }
+
+  // ✅ ถ้าเช็คเสร็จแล้ว และเป็น Maintenance Mode -> โชว์หน้านี้เลย (ไม่แวบหน้า Login)
+  if (isMaintenance && !isAdminBypass) {
+    return (
+      <div style={{ 
+        height: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        background: '#f8fafc',
+        flexDirection: 'column',
+        textAlign: 'center',
+        fontFamily: "'Prompt', sans-serif"
+      }}>
+        <div style={{ fontSize: '4rem', color: '#f59e0b', marginBottom: '20px' }}>
+          <i className="fa-solid fa-screwdriver-wrench"></i>
+        </div>
+        <h1 style={{ color: '#1e293b', marginBottom: '10px' }}>ระบบปิดปรับปรุงชั่วคราว</h1>
+        <p style={{ color: '#64748b', maxWidth: '400px' }}>
+          เรากำลังอัปเดตระบบเพื่อให้ดียิ่งขึ้น กรุณากลับมาใหม่ในภายหลัง
+        </p>
+        
+      </div>
+    );
+  }
+
+  // หน้า Login ปกติ
   return (
     <div className="login-wrapper">
-      
-      {/* ฝั่งซ้าย: Slider */}
       <div className="login-left">
         <div className="slider-container">
             <div className="slider-track" style={{ transform: `translateX(-${currentSlide * 100}%)` }}>
@@ -190,7 +242,6 @@ function Login() {
         </div>
       </div>
 
-      {/* ฝั่งขวา: Login / Register Form */}
       <div className="login-right">
         <div className="form-container" style={{maxWidth: isRegisterMode ? '450px' : '400px'}}> 
           
@@ -200,7 +251,6 @@ function Login() {
 
           <form onSubmit={isRegisterMode ? handleRegister : handleLogin}>
             
-            {/* Register Fields */}
             {isRegisterMode && (
                 <>
                     <div className="input-line-group">
@@ -221,7 +271,6 @@ function Login() {
                 </>
             )}
 
-            {/* Login Fields */}
             <div className="input-line-group">
                 <i className="fa-regular fa-user"></i>
                 <input type="text" name="username" placeholder="ชื่อผู้ใช้งาน (Username)" required value={formData.username} onChange={handleChange} />
@@ -231,7 +280,6 @@ function Login() {
                 <input type="password" name="password" placeholder="รหัสผ่าน" required value={formData.password} onChange={handleChange} />
             </div>
 
-            {/* Confirm Password (Register) */}
             {isRegisterMode && (
                 <div className="input-line-group" style={{marginBottom: '30px'}}>
                     <i className="fa-solid fa-lock"></i>
@@ -244,7 +292,6 @@ function Login() {
             </button>
           </form>
 
-          {/* Toggle Button */}
           <div className="toggle-auth" style={{marginTop:'20px', textAlign:'center'}}>
             {isRegisterMode ? 'มีบัญชีอยู่แล้ว?' : 'ยังไม่มีบัญชีใช่ไหม?'} 
             <span 
