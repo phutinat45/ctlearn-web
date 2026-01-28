@@ -7,7 +7,7 @@ function AdminUsers() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all'); // all, student, admin
-  const [filterGrade, setFilterGrade] = useState('all'); // ✅ เพิ่ม State สำหรับกรองระดับชั้น
+  const [filterGrade, setFilterGrade] = useState('all'); // ✅ State สำหรับกรองระดับชั้น
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -37,10 +37,12 @@ function AdminUsers() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
+      
+      // ✅ 1. เลือกเฉพาะคอลัมน์ที่ใช้จริง (โหลดเร็วกว่า *)
+      // ✅ 2. เรียงตาม Grade ก่อน แล้วตาม Username
       const { data, error } = await supabase
         .from('users')
-        .select('*')
-        // ✅ แก้ไขการเรียงลำดับ: เรียงตามระดับชั้น -> แล้วค่อยเรียงตาม username (รหัสนักเรียน)
+        .select('id, fullname, username, password, grade_level, role, status, image') 
         .order('grade_level', { ascending: true }) 
         .order('username', { ascending: true });
       
@@ -53,8 +55,9 @@ function AdminUsers() {
     }
   };
 
-  // ✅ สร้างรายการระดับชั้นทั้งหมดจากข้อมูลที่มี (ไม่ซ้ำกัน)
-  const availableGrades = [...new Set(users.map(u => u.grade_level).filter(g => g))].sort();
+  // ✅ สร้างรายการระดับชั้น (เรียงแบบธรรมชาติ ม.2 มาก่อน ม.10)
+  const availableGrades = [...new Set(users.map(u => u.grade_level).filter(g => g))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   // --- Handlers ---
   const handleAddClick = () => {
@@ -178,7 +181,7 @@ function AdminUsers() {
     const matchSearch = (u.fullname || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
                         (u.username || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchRole = filterRole === 'all' ? true : u.role === filterRole;
-    // ✅ เพิ่ม Logic การกรองระดับชั้น
+    // ✅ กรองตามระดับชั้น
     const matchGrade = filterGrade === 'all' ? true : u.grade_level === filterGrade;
     
     return matchSearch && matchRole && matchGrade;
@@ -233,7 +236,7 @@ function AdminUsers() {
               ))}
           </div>
 
-          {/* ✅ Grade Filter (เพิ่มใหม่) */}
+          {/* ✅ Grade Filter (Dropdown เลือกชั้น) */}
           <div style={{ position:'relative', minWidth: '150px' }}>
              <select 
                 value={filterGrade} 
