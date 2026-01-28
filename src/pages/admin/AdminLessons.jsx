@@ -19,6 +19,9 @@ function AdminLessons() {
   const [selectedSlideFile, setSelectedSlideFile] = useState(null);
   const [previewSlideName, setPreviewSlideName] = useState(null);
 
+  // ✅ Quiz Image Files State
+  const [quizImageFiles, setQuizImageFiles] = useState({}); 
+
   // Categories State
   const [categories, setCategories] = useState(['Computational Thinking', 'Coding', 'Algorithm', 'วิทยาการคำนวณ']);
   const [newCategory, setNewCategory] = useState('');
@@ -57,6 +60,7 @@ function AdminLessons() {
       setSelectedImageFile(null);
       setSelectedSlideFile(null);
       setPreviewSlideName(null);
+      setQuizImageFiles({}); 
       setActiveLessonTab('info'); 
       setShowLessonModal(true); 
   };
@@ -73,6 +77,7 @@ function AdminLessons() {
       setSelectedImageFile(null); 
       setSelectedSlideFile(null);
       setPreviewSlideName(null);
+      setQuizImageFiles({});
       setActiveLessonTab('info'); 
       setShowLessonModal(true); 
   };
@@ -91,6 +96,29 @@ function AdminLessons() {
           setSelectedSlideFile(file);
           setPreviewSlideName(file.name);
       }
+  };
+
+  // --- Quiz Image Handler ---
+  const handleQuizImageChange = (e, index) => {
+      if (e.target.files[0]) {
+          const file = e.target.files[0];
+          setQuizImageFiles(prev => ({ ...prev, [index]: file }));
+          
+          const previewUrl = URL.createObjectURL(file);
+          const updatedQuiz = [...currentLesson.quiz];
+          updatedQuiz[index].image = previewUrl; 
+          setCurrentLesson({ ...currentLesson, quiz: updatedQuiz });
+      }
+  };
+
+  const removeQuizImage = (index) => {
+      const updatedQuiz = [...currentLesson.quiz];
+      updatedQuiz[index].image = null;
+      setCurrentLesson({ ...currentLesson, quiz: updatedQuiz });
+      
+      const newQuizFiles = { ...quizImageFiles };
+      delete newQuizFiles[index];
+      setQuizImageFiles(newQuizFiles);
   };
 
   // --- Category Handlers ---
@@ -140,11 +168,23 @@ function AdminLessons() {
             if (uploadedUrl) slideUrl = uploadedUrl;
         }
 
-        const processedQuiz = currentLesson.quiz.map(q => ({
-            question: q.question,
-            options: q.options,
-            correct: q.correct, 
-            answer: q.options[q.correct] || "" 
+        const processedQuiz = await Promise.all(currentLesson.quiz.map(async (q, index) => {
+            let quizImgUrl = q.image; 
+
+            if (quizImageFiles[index]) {
+                const uploadedQuizImg = await uploadFileToSupabase(quizImageFiles[index], 'lesson_images');
+                if (uploadedQuizImg) quizImgUrl = uploadedQuizImg;
+            } else if (q.image && q.image.startsWith('blob:')) {
+                quizImgUrl = null; 
+            }
+
+            return {
+                question: q.question,
+                image: quizImgUrl, 
+                options: q.options,
+                correct: q.correct, 
+                answer: q.options[q.correct] || "" 
+            };
         }));
 
         const lessonData = {
@@ -182,7 +222,6 @@ function AdminLessons() {
     }
   };
 
-  // ✅ แก้ไข: เพิ่มการลบ Progress ก่อนลบบทเรียน (Manual Cascade Delete)
   const handleLessonDelete = async (id) => { 
       Swal.fire({
           title: 'ยืนยันการลบ?', 
@@ -197,19 +236,12 @@ function AdminLessons() {
           if (result.isConfirmed) {
               setIsLoading(true);
               try {
-                  // 1. ลบข้อมูล Progress ที่เกี่ยวข้องก่อน (กัน Error Foreign Key)
-                  const { error: progressError } = await supabase
-                      .from('progress')
-                      .delete()
-                      .eq('lesson_id', id);
-                  
+                  const { error: progressError } = await supabase.from('progress').delete().eq('lesson_id', id);
                   if (progressError) console.warn("Error deleting progress:", progressError);
 
-                  // 2. ลบบทเรียน
                   const { error } = await supabase.from('lessons').delete().eq('id', id);
                   if (error) throw error;
 
-                  // 3. อัปเดตหน้าจอ
                   setLessons(lessons.filter(l => l.id !== id));
                   Swal.fire('ลบแล้ว!', 'บทเรียนถูกลบเรียบร้อย', 'success');
 
@@ -223,8 +255,7 @@ function AdminLessons() {
       });
   };
 
-  // Quiz Logic
-  const addQuestion = () => { setCurrentLesson({ ...currentLesson, quiz: [...currentLesson.quiz, { question: '', options: ['', '', '', ''], correct: 0 }] }); };
+  const addQuestion = () => { setCurrentLesson({ ...currentLesson, quiz: [...currentLesson.quiz, { question: '', image: null, options: ['', '', '', ''], correct: 0 }] }); };
   const updateQuestion = (idx, field, val) => { const q = [...currentLesson.quiz]; q[idx][field] = val; setCurrentLesson({...currentLesson, quiz: q}); };
   const updateOption = (qIdx, oIdx, val) => { const q = [...currentLesson.quiz]; q[qIdx].options[oIdx] = val; setCurrentLesson({...currentLesson, quiz: q}); };
   const deleteQuestion = (idx) => { setCurrentLesson({ ...currentLesson, quiz: currentLesson.quiz.filter((_, i) => i !== idx) }); };
@@ -248,10 +279,8 @@ function AdminLessons() {
             </button>
         </div>
 
-        {/* Loading */}
         {isLoading && <div style={{textAlign:'center', padding:'40px', color:'#3b82f6'}}><i className="fa-solid fa-circle-notch fa-spin" style={{fontSize:'2.5rem', marginBottom:'10px'}}></i><p>กำลังดำเนินการกับฐานข้อมูล...</p></div>}
 
-        {/* Table */}
         <div style={{ overflowX: 'auto', borderRadius:'16px', border:'1px solid #f1f5f9' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
                 <thead>
@@ -303,12 +332,10 @@ function AdminLessons() {
             </table>
         </div>
 
-        {/* Modal */}
         {showLessonModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => !isLoading && setShowLessonModal(false)}>
             <div style={{ background: 'white', width: '90%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px', padding: '0', position: 'relative', display: 'flex', flexDirection: 'column', boxShadow:'0 20px 50px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
                 
-                {/* Modal Header */}
                 <div style={{ padding: '20px 30px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: 'white', zIndex: 10 }}>
                     <h2 style={{ margin: 0, color: '#1e293b', fontSize:'1.5rem', display:'flex', alignItems:'center', gap:'10px' }}>
                         {isEditingLesson ? <i className="fa-solid fa-pen-to-square" style={{color:'#3b82f6'}}></i> : <i className="fa-solid fa-sparkles" style={{color:'#f59e0b'}}></i>}
@@ -317,7 +344,6 @@ function AdminLessons() {
                     <button onClick={() => setShowLessonModal(false)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', color: '#94a3b8', cursor: 'pointer', padding:'5px' }}><i className="fa-solid fa-xmark"></i></button>
                 </div>
 
-                {/* Tabs */}
                 <div style={{ padding: '0 30px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '30px' }}>
                     {['info', 'content', 'quiz'].map(tab => (
                         <button key={tab} onClick={() => setActiveLessonTab(tab)} style={{ padding: '18px 0', background: 'none', border: 'none', cursor: 'pointer', borderBottom: activeLessonTab === tab ? '3px solid #3b82f6' : '3px solid transparent', color: activeLessonTab === tab ? '#3b82f6' : '#64748b', fontWeight: activeLessonTab === tab ? 'bold' : '500', fontSize: '1rem', transition:'all 0.2s' }}>
@@ -328,10 +354,7 @@ function AdminLessons() {
                     ))}
                 </div>
 
-                {/* Modal Body */}
                 <div style={{ padding: '30px' }}>
-                    
-                    {/* --- Tab 1: Info --- */}
                     {activeLessonTab === 'info' && (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '30px' }}>
                             <div>
@@ -348,7 +371,6 @@ function AdminLessons() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                 <div><label className="form-label" style={{fontWeight:'bold', color:'#334155'}}>ชื่อบทเรียน</label><input type="text" className="form-control" style={{width:'100%', padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0'}} value={currentLesson.title} onChange={e => setCurrentLesson({...currentLesson, title: e.target.value})} placeholder="เช่น การคิดเชิงคำนวณเบื้องต้น" /></div>
                                 
-                                {/* หมวดหมู่ */}
                                 <div>
                                     <label className="form-label" style={{fontWeight:'bold', color:'#334155'}}>หมวดหมู่</label>
                                     <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
@@ -360,7 +382,6 @@ function AdminLessons() {
                                         </button>
                                     </div>
 
-                                    {/* กล่องจัดการหมวดหมู่ */}
                                     {isManagingCategory && (
                                         <div style={{ background: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '15px', boxShadow:'0 4px 6px rgba(0,0,0,0.02)' }}>
                                             <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
@@ -388,7 +409,6 @@ function AdminLessons() {
                         </div>
                     )}
 
-                    {/* --- Tab 2: Content --- */}
                     {activeLessonTab === 'content' && (
                         <div>
                             <div style={{ marginBottom: '25px' }}><label className="form-label" style={{fontWeight:'bold', color:'#334155'}}>คำอธิบายบทเรียน</label><textarea rows="5" className="form-control" style={{width:'100%', padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0'}} value={currentLesson.description} onChange={e => setCurrentLesson({...currentLesson, description: e.target.value})}></textarea></div>
@@ -402,7 +422,6 @@ function AdminLessons() {
                         </div>
                     )}
 
-                    {/* --- Tab 3: Quiz --- */}
                     {activeLessonTab === 'quiz' && (
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -412,42 +431,87 @@ function AdminLessons() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '450px', overflowY: 'auto', paddingRight: '5px' }}>
                                 {currentLesson.quiz && currentLesson.quiz.map((q, qIndex) => (
                                     <div key={qIndex} style={{ background: '#f8fafc', padding: '25px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow:'0 2px 6px rgba(0,0,0,0.02)' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
-                                            <span style={{ fontWeight: 'bold', color: '#3b82f6', fontSize:'1.1rem' }}>ข้อที่ {qIndex + 1}</span>
-                                            <button onClick={() => deleteQuestion(qIndex)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><i className="fa-solid fa-trash-can"></i></button>
-                                        </div>
-                                        <input type="text" className="form-control" style={{ width: '100%', marginBottom: '20px', padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0', fontWeight:'bold' }} placeholder="พิมพ์โจทย์คำถาม..." value={q.question} onChange={e => updateQuestion(qIndex, 'question', e.target.value)} />
-                                        
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                                            {q.options.map((opt, oIndex) => (
-                                                <div 
-                                                    key={oIndex} 
-                                                    onClick={() => updateQuestion(qIndex, 'correct', oIndex)} // คลิกที่กล่องได้เลย
-                                                    style={{ 
-                                                        display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '12px 15px', borderRadius: '12px', cursor:'pointer', transition:'all 0.2s',
-                                                        border: q.correct === oIndex ? '2px solid #22c55e' : '1px solid #e2e8f0', 
-                                                        background: q.correct === oIndex ? '#f0fdf4' : 'white'
-                                                    }}
-                                                >
-                                                    <div style={{ 
-                                                        width: '24px', height: '24px', borderRadius: '50%', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0,
-                                                        border: q.correct === oIndex ? 'none' : '2px solid #cbd5e1', 
-                                                        background: q.correct === oIndex ? '#22c55e' : 'white', 
-                                                        color:'white'
-                                                    }}>
-                                                        {q.correct === oIndex && <i className="fa-solid fa-check" style={{fontSize:'0.8rem'}}></i>}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+                                                <span style={{ fontWeight: 'bold', color: '#3b82f6', fontSize:'1.1rem' }}>ข้อที่ {qIndex + 1}</span>
+                                                <button onClick={() => deleteQuestion(qIndex)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><i className="fa-solid fa-trash-can"></i></button>
+                                            </div>
+                                            
+                                            {/* --- ✅ Image Upload for Quiz with Responsive Fix --- */}
+                                            <div style={{ marginBottom: '20px', background: 'white', padding: '15px', borderRadius: '12px', border: '1px dashed #cbd5e1', textAlign: 'center' }}>
+                                                {q.image ? (
+                                                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                                                        {/* 🔥 แก้ไข Style ตรงนี้ให้ภาพไม่ล้นและดูดี */}
+                                                        <img 
+                                                            src={q.image} 
+                                                            alt="Quiz" 
+                                                            style={{ 
+                                                                maxWidth: '100%', 
+                                                                maxHeight: '200px', 
+                                                                width: 'auto', 
+                                                                height: 'auto', 
+                                                                objectFit: 'contain', 
+                                                                borderRadius: '8px' 
+                                                            }} 
+                                                        />
+                                                        <button 
+                                                            onClick={() => removeQuizImage(qIndex)}
+                                                            style={{ position: 'absolute', top: '-10px', right: '-10px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                        >
+                                                            <i className="fa-solid fa-xmark"></i>
+                                                        </button>
                                                     </div>
+                                                ) : (
+                                                    <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+                                                        <i className="fa-regular fa-image" style={{ marginRight: '8px' }}></i>
+                                                        ไม่มีรูปภาพประกอบ
+                                                    </div>
+                                                )}
+                                                <div style={{ marginTop: '10px' }}>
+                                                    <label htmlFor={`quiz-img-${qIndex}`} style={{ cursor: 'pointer', color: '#3b82f6', fontSize: '0.9rem', fontWeight: 'bold' }}>
+                                                        {q.image ? 'เปลี่ยนรูปภาพ' : '+ เพิ่มรูปภาพประกอบ'}
+                                                    </label>
                                                     <input 
-                                                        type="text" 
-                                                        placeholder={`ตัวเลือก ${oIndex + 1}`} 
-                                                        style={{ border: 'none', width: '100%', outline: 'none', background:'transparent', fontSize:'0.95rem', color: q.correct === oIndex ? '#15803d' : '#334155' }} 
-                                                        value={opt} 
-                                                        onChange={e => updateOption(qIndex, oIndex, e.target.value)} 
-                                                        onClick={(e) => e.stopPropagation()} 
+                                                        type="file" 
+                                                        id={`quiz-img-${qIndex}`} 
+                                                        hidden 
+                                                        accept="image/*" 
+                                                        onChange={(e) => handleQuizImageChange(e, qIndex)} 
                                                     />
                                                 </div>
-                                            ))}
-                                        </div>
+                                            </div>
+
+                                            <input type="text" className="form-control" style={{ width: '100%', marginBottom: '20px', padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0', fontWeight:'bold' }} placeholder="พิมพ์โจทย์คำถาม..." value={q.question} onChange={e => updateQuestion(qIndex, 'question', e.target.value)} />
+                                            
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                                                {q.options.map((opt, oIndex) => (
+                                                    <div 
+                                                        key={oIndex} 
+                                                        onClick={() => updateQuestion(qIndex, 'correct', oIndex)} 
+                                                        style={{ 
+                                                            display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '12px 15px', borderRadius: '12px', cursor:'pointer', transition:'all 0.2s',
+                                                            border: q.correct === oIndex ? '2px solid #22c55e' : '1px solid #e2e8f0', 
+                                                            background: q.correct === oIndex ? '#f0fdf4' : 'white'
+                                                        }}
+                                                    >
+                                                        <div style={{ 
+                                                            width: '24px', height: '24px', borderRadius: '50%', display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0,
+                                                            border: q.correct === oIndex ? 'none' : '2px solid #cbd5e1', 
+                                                            background: q.correct === oIndex ? '#22c55e' : 'white', 
+                                                            color:'white'
+                                                        }}>
+                                                            {q.correct === oIndex && <i className="fa-solid fa-check" style={{fontSize:'0.8rem'}}></i>}
+                                                        </div>
+                                                        <input 
+                                                            type="text" 
+                                                            placeholder={`ตัวเลือก ${oIndex + 1}`} 
+                                                            style={{ border: 'none', width: '100%', outline: 'none', background:'transparent', fontSize:'0.95rem', color: q.correct === oIndex ? '#15803d' : '#334155' }} 
+                                                            value={opt} 
+                                                            onChange={e => updateOption(qIndex, oIndex, e.target.value)} 
+                                                            onClick={(e) => e.stopPropagation()} 
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
                                     </div>
                                 ))}
                                 {currentLesson.quiz.length === 0 && <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px', background:'#f9fafb', borderRadius:'16px' }}>ยังไม่มีข้อสอบ กดปุ่ม "+ เพิ่มข้อสอบ" เพื่อเริ่มสร้าง</div>}
@@ -456,7 +520,6 @@ function AdminLessons() {
                     )}
                 </div>
 
-                {/* Modal Footer (Updated) */}
                 <div style={{ padding: '20px 30px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', gap: '15px', background: 'white', position: 'sticky', bottom: 0, borderRadius: '0 0 24px 24px' }}>
                     <button 
                         onClick={() => setShowLessonModal(false)} 
