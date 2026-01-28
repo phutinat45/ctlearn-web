@@ -7,6 +7,7 @@ function AdminUsers() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all'); // all, student, admin
+  const [filterGrade, setFilterGrade] = useState('all'); // ✅ เพิ่ม State สำหรับกรองระดับชั้น
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -39,7 +40,9 @@ function AdminUsers() {
       const { data, error } = await supabase
         .from('users')
         .select('*')
-        .order('created_at', { ascending: false });
+        // ✅ แก้ไขการเรียงลำดับ: เรียงตามระดับชั้น -> แล้วค่อยเรียงตาม username (รหัสนักเรียน)
+        .order('grade_level', { ascending: true }) 
+        .order('username', { ascending: true });
       
       if (error) throw error;
       setUsers(data);
@@ -49,6 +52,9 @@ function AdminUsers() {
       setLoading(false);
     }
   };
+
+  // ✅ สร้างรายการระดับชั้นทั้งหมดจากข้อมูลที่มี (ไม่ซ้ำกัน)
+  const availableGrades = [...new Set(users.map(u => u.grade_level).filter(g => g))].sort();
 
   // --- Handlers ---
   const handleAddClick = () => {
@@ -82,7 +88,7 @@ function AdminUsers() {
       const filePath = `${fileName}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('lesson_images') // ใช้ bucket lesson_images ตามที่ตั้งค่าไว้
+        .from('lesson_images') 
         .upload(filePath, file);
 
       if (uploadError) throw uploadError;
@@ -134,7 +140,6 @@ function AdminUsers() {
     }
   };
 
-  // ✅ แก้ไข: เพิ่มการลบ Progress ของ User ก่อนลบ Account
   const handleDelete = async (id) => {
     Swal.fire({
       title: 'ยืนยันการลบ?',
@@ -147,7 +152,6 @@ function AdminUsers() {
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          // 1. ลบข้อมูลคะแนน (Progress) ของนักเรียนคนนี้ก่อน
           const { error: progressError } = await supabase
             .from('progress')
             .delete()
@@ -155,11 +159,9 @@ function AdminUsers() {
 
           if (progressError) console.warn("Error deleting progress:", progressError);
 
-          // 2. ลบข้อมูล User
           const { error } = await supabase.from('users').delete().eq('id', id);
           if (error) throw error;
 
-          // 3. อัปเดตหน้าจอ
           fetchUsers();
           Swal.fire('ลบแล้ว!', 'ข้อมูลผู้ใช้งานถูกลบแล้ว', 'success');
 
@@ -176,7 +178,10 @@ function AdminUsers() {
     const matchSearch = (u.fullname || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
                         (u.username || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchRole = filterRole === 'all' ? true : u.role === filterRole;
-    return matchSearch && matchRole;
+    // ✅ เพิ่ม Logic การกรองระดับชั้น
+    const matchGrade = filterGrade === 'all' ? true : u.grade_level === filterGrade;
+    
+    return matchSearch && matchRole && matchGrade;
   });
 
   // Helper UI
@@ -207,7 +212,8 @@ function AdminUsers() {
       </div>
 
       {/* Filter Bar */}
-      <div style={{ display:'flex', gap:'15px', marginBottom:'25px', flexWrap:'wrap' }}>
+      <div style={{ display:'flex', gap:'15px', marginBottom:'25px', flexWrap:'wrap', alignItems: 'center' }}>
+          {/* Role Filter */}
           <div style={{ display:'flex', background:'#f1f5f9', padding:'5px', borderRadius:'12px', gap:'5px' }}>
               {['all', 'student', 'admin'].map(role => (
                   <button 
@@ -226,7 +232,23 @@ function AdminUsers() {
                   </button>
               ))}
           </div>
+
+          {/* ✅ Grade Filter (เพิ่มใหม่) */}
+          <div style={{ position:'relative', minWidth: '150px' }}>
+             <select 
+                value={filterGrade} 
+                onChange={(e) => setFilterGrade(e.target.value)}
+                style={{ width:'100%', padding:'10px 15px', borderRadius:'12px', border:'1px solid #e2e8f0', outline:'none', color:'#475569', cursor:'pointer', appearance: 'none', background: 'white' }}
+             >
+                 <option value="all">ทุกระดับชั้น</option>
+                 {availableGrades.map((grade, idx) => (
+                     <option key={idx} value={grade}>{grade}</option>
+                 ))}
+             </select>
+             <i className="fa-solid fa-chevron-down" style={{ position:'absolute', right:'15px', top:'50%', transform:'translateY(-50%)', color:'#94a3b8', fontSize:'0.8rem', pointerEvents:'none' }}></i>
+          </div>
           
+          {/* Search */}
           <div style={{ flex:1, position:'relative' }}>
               <i className="fa-solid fa-magnifying-glass" style={{position:'absolute', left:'15px', top:'50%', transform:'translateY(-50%)', color:'#94a3b8'}}></i>
               <input 
